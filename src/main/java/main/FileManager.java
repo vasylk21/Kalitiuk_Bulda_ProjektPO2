@@ -1,3 +1,5 @@
+package main;
+
 import java.io.*;
 import java.time.LocalDate;
 
@@ -12,7 +14,7 @@ public class FileManager {
         try (FileWriter writer = new FileWriter(filePath, true)) {
             writer.write(winner + "," + LocalDate.now() + "\n");
         } catch (IOException e) {
-            System.err.println("Błąd podczas zapisywania wyniku: " + e.getMessage());
+            System.err.println("Blad podczas zapisywania wyniku: " + e.getMessage());
     }
     }
 
@@ -23,7 +25,7 @@ public class FileManager {
                 System.out.println(line);
             }
         } catch (IOException e) {
-            System.err.println("Błąd podczas odczytywania wyników: " + e.getMessage());
+            System.err.println("Blad podczas odczytywania wynikow: " + e.getMessage());
         }
     }
 }
