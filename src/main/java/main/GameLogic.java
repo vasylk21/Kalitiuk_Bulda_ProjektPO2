@@ -24,15 +24,23 @@ public class GameLogic {
     }
 
     private void initializeGame() {
-        String[] colors = {"Czerwony", "Zolty", "Zielony", "Niebieski"};
-        String[] values = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "Stop", "Zmiana", "Dobierz Dwie"};
+        String[] colors = {"RED", "YELLOW", "GREEN", "BLUE"};
+        String[] values = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "STOP", "REVERSE", "DRAW_TWO"};
 
         for (String color : colors) {
             for (String value : values) {
-                deck.add(new Card(color, value));
-                deck.add(new Card(color, value)); // Две карты каждого типа
+                deck.add(new Card(value, color));
+                deck.add(new Card(value, color)); // Две карты каждого типа
             }
         }
+
+        String[] wildCards = {"WILD", "DRAW_FOUR"};
+        for (String wild : wildCards) {
+            for (int i = 0; i < 4; i++) {
+                deck.add(new Card(wild, "BLACK"));
+            }
+        }
+
         Collections.shuffle(deck);
 
         // Раздаем карты игрокам
@@ -57,20 +65,23 @@ public class GameLogic {
         List<Card> hand = getPlayerHand(playerIndex);
         Card chosenCard = hand.get(cardIndex);
 
-        if (chosenCard.getColor().equals(getTopCard().getColor()) || chosenCard.getValue().equals(getTopCard().getValue())) {
+        if (chosenCard.matches(getTopCard())) {
             discardPile.push(chosenCard);
             hand.remove(cardIndex);
 
             // Обработка спецкарт
             switch (chosenCard.getValue()) {
-                case "Stop":
+                case "STOP":
                     skipNextTurn = true;
                     break;
-                case "Zmiana":
+                case "REVERSE":
                     reverseDirection = !reverseDirection;
                     break;
-                case "Dobierz Dwie":
+                case "DRAW_TWO":
                     drawCards((currentPlayerIndex + 1) % 2, 2);
+                    break;
+                case "DRAW_FOUR":
+                    drawCards((currentPlayerIndex + 1) % 2, 4);
                     break;
             }
             return true;
@@ -100,8 +111,8 @@ public class GameLogic {
             skipNextTurn = false;
         } else {
             currentPlayerIndex = (reverseDirection)
-                    ? (currentPlayerIndex + 1) % 2
-                    : (currentPlayerIndex == 0 ? 1 : 0);
+                    ? (currentPlayerIndex == 0 ? 1 : 0)
+                    : (currentPlayerIndex + 1) % 2;
         }
     }
 
@@ -110,21 +121,27 @@ public class GameLogic {
     }
 
     public String getWinner() {
-        if (player1Hand.isEmpty()) return "Gracz 1";
-        if (player2Hand.isEmpty()) return "Gracz 2";
+        if (player1Hand.isEmpty()) return "Player 1";
+        if (player2Hand.isEmpty()) return "Player 2";
         return null;
     }
 
     public String getGameState(int requestingPlayer) {
         JsonObject gameState = new JsonObject();
-        gameState.addProperty("top_card", getTopCard().toString());
-        gameState.addProperty("current_player", currentPlayerIndex == 0 ? "Gracz 1" : "Gracz 2");
+        gameState.addProperty("top_card", getTopCard().toString().toUpperCase());
+        gameState.addProperty("current_player", currentPlayerIndex == 0 ? "Player 1" : "Player 2");
 
         JsonArray playerHandArray = new JsonArray();
         for (Card card : getPlayerHand(requestingPlayer)) {
-            playerHandArray.add(card.toString());
+            playerHandArray.add(card.toString().toUpperCase());
         }
         gameState.add("player_hand", playerHandArray);
+
+        JsonArray opponentHandArray = new JsonArray();
+        for (Card card : getPlayerHand((requestingPlayer + 1) % 2)) {
+            opponentHandArray.add("CARD_BACK");
+        }
+        gameState.add("opponent_hand", opponentHandArray);
 
         gameState.addProperty("opponent_card_count", getPlayerHand((requestingPlayer + 1) % 2).size());
 

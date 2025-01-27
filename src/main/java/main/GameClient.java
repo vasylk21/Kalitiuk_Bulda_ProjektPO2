@@ -1,50 +1,58 @@
 package main;
 
-import org.json.JSONObject;
 import java.io.*;
 import java.net.*;
-import java.util.*;
+import java.util.function.Consumer;
+import javafx.application.Platform;
+import javafx.stage.Stage;
 
 public class GameClient {
-    private static final String SERVER_ADDRESS = "localhost";
-    private static final int SERVER_PORT = 12345;
-    private static Scanner scanner = new Scanner(System.in);
+    private Socket socket;
+    private PrintWriter output;
+    private BufferedReader input;
+    private Consumer<String> onGameStateReceived; // Callback для обновления UI
 
-    public static void startClient() {
-        try (Socket socket = new Socket(SERVER_ADDRESS, SERVER_PORT)) {
-            BufferedReader input = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-            PrintWriter output = new PrintWriter(socket.getOutputStream(), true);
+    public void startClient() {
+        try {
+            socket = new Socket("localhost", 12345); // Подключаемся к серверу
+            output = new PrintWriter(socket.getOutputStream(), true);
+            input = new BufferedReader(new InputStreamReader(socket.getInputStream()));
 
-            System.out.println("Witamy w grze UNO!");
-
-            while (true) {
-                String gameState = input.readLine();
-                System.out.println("Otrzymano stan gry: " + gameState);
-                if (gameState.contains("Koniec gry")) {
-                    System.out.println(gameState);
-                    break;
+            // Поток для чтения данных от сервера
+            new Thread(() -> {
+                try {
+                    String serverMessage;
+                    while ((serverMessage = input.readLine()) != null) {
+                        System.out.println("Получено сообщение от сервера: " + serverMessage); // Добавлено логирование
+                        if (serverMessage.equals("START_GAME")) {
+                            Platform.runLater(() -> {
+                                Stage primaryStage = (Stage) WaitingRoom.waitingLabel.getScene().getWindow();
+                                GameApp gameApp = new GameApp();
+                                gameApp.startGame(primaryStage, this);
+                            });
+                        } else if (onGameStateReceived != null) {
+                            onGameStateReceived.accept(serverMessage);
+                        }
+                    }
+                } catch (IOException e) {
+                    e.printStackTrace();
                 }
-
-                displayGameState(gameState);
-
-                System.out.print("\nWybierz swoja akcje (lub wpisz 'dobierz'): ");
-                String action = scanner.nextLine();
-                System.out.println("Wysylam akcje: " + action);
-                output.println(action);
-            }
+            }).start();
         } catch (IOException e) {
             e.printStackTrace();
         }
     }
 
-    private static void displayGameState(String gameState) {
-        JSONObject jsonObject = new JSONObject(gameState);
-        System.out.println("\n=== Stan gry ===");
-        System.out.println("Karta na stole: " + jsonObject.getString("top_card"));
-        System.out.println("Twoje karty: ");
-        for (int i = 0; i < jsonObject.getJSONArray("player_hand").length(); i++) {
-            System.out.println(i + ": " + jsonObject.getJSONArray("player_hand").getString(i));
+    // Метод для отправки хода игрока (например, выбрать карту или взять карту из колоды)
+    public void sendAction(String action) {
+        if (output != null) {
+            output.println(action);
+            System.out.println("Отправлено действие на сервер: " + action); // Добавлено логирование
         }
-        System.out.println("Liczba kart przeciwnika: " + jsonObject.getInt("opponent_card_count"));
+    }
+
+    // Устанавливаем обработчик для обновления интерфейса на основе состояния игры
+    public void setOnGameStateReceived(Consumer<String> callback) {
+        this.onGameStateReceived = callback;
     }
 }

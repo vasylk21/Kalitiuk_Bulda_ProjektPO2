@@ -24,40 +24,60 @@ public class GameServer {
                 System.out.println("Gracz " + (i + 1) + " polaczony!");
             }
 
+            // Отправляем сообщение о старте игры обоим игрокам
+            for (PrintWriter output : outputs) {
+                output.println("START_GAME");
+            }
+
+            // Отправляем начальное состояние игры обоим игрокам
+            for (int i = 0; i < 2; i++) {
+                sendGameState(i);
+            }
+
             // Основной игровой цикл
             while (!game.isGameOver()) {
                 for (int i = 0; i < 2; i++) {
-                    sendGameState(i);
-
-                    // Ожидаем действия игрока
+                    // Ждем действия от игрока
                     String action = inputs.get(i).readLine();
-                    System.out.println("Otrzymano akcje od gracza " + (i + 1) + ": " + action);
+                    if (action == null) continue;
+                    System.out.println("Игрок " + (i + 1) + " выбрал действие: " + action);
+
                     if (action.equals("dobierz")) {
                         game.drawCards(i, 1);
                     } else {
                         try {
                             int cardIndex = Integer.parseInt(action);
                             if (!game.playCard(i, cardIndex)) {
-                                outputs.get(i).println("Nieprawidlowy ruch.");
+                                outputs.get(i).println("Неправильный ход.");
                                 continue;
                             }
                         } catch (NumberFormatException e) {
-                            outputs.get(i).println("Nieprawidlowe dane.");
+                            outputs.get(i).println("Неправильные данные.");
                             continue;
                         }
                     }
 
-                    if (game.isGameOver()) break;
+                    // Проверка окончания игры
+                    if (game.isGameOver()) {
+                        break;
+                    }
 
+                    // Переключение хода
                     game.switchTurn();
+
+                    // Отправляем обновленное состояние игры обоим игрокам
+                    for (int j = 0; j < 2; j++) {
+                        sendGameState(j);
+                    }
                 }
             }
 
-            // Игра закончена, отправляем результат
+            // Уведомляем о завершении игры
             String winner = game.getWinner();
             for (PrintWriter output : outputs) {
-                output.println("Koniec gry! Zwyciezca: " + winner);
+                output.println("Koniec gry! Победитель: " + winner);
             }
+
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -66,5 +86,10 @@ public class GameServer {
     private static void sendGameState(int playerIndex) {
         String gameState = game.getGameState(playerIndex);
         outputs.get(playerIndex).println(gameState);
+        System.out.println("Отправлено состояние игры игроку " + (playerIndex + 1) + ": " + gameState); // Добавлено логирование
+    }
+
+    public static void main(String[] args) {
+        startServer();
     }
 }

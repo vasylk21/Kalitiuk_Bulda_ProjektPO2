@@ -15,7 +15,7 @@ public class FileManager {
             writer.write(winner + "," + LocalDate.now() + "\n");
         } catch (IOException e) {
             System.err.println("Blad podczas zapisywania wyniku: " + e.getMessage());
-    }
+        }
     }
 
     public void readResults() {
