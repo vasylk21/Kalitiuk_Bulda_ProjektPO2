@@ -5,135 +5,212 @@ import javafx.application.Platform;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
+import javafx.scene.control.Label;
+import javafx.scene.control.ProgressIndicator;
+import javafx.scene.control.TextField;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
-import javafx.scene.layout.HBox;
-import javafx.scene.layout.VBox;
+import javafx.scene.layout.*;
 import javafx.stage.Stage;
+import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.net.URL;
+import java.io.InputStream;
+import java.io.FileNotFoundException;
 
 public class GameApp extends Application {
-    private ImageView topCardImageView;
-    private HBox playerHandBox;
-    private HBox opponentHandBox;
-    private ImageView drawPileImageView;
-    private GameClient gameClient;
-    private Button drawCardButton;
+    private Stage primaryStage;
+    private GameClient client;
+    private ImageView[] opponentViews; // Widoki kart przeciwników
+    private HBox playerHand = new HBox(10); // Kontener na karty gracza
+    private Label currentPlayerLabel = new Label(); // Etykieta z informacją o obecnym graczu
+    private ImageView topCard = new ImageView(); // Widok karty na wierzchu stosu
+    private Button btnDraw = new Button("Weź kartę"); // Przycisk do dobierania kart
+    private HBox opponentsBox = new HBox(10); // Kontener na karty przeciwników
 
     @Override
-    public void start(Stage primaryStage) {
-        primaryStage.setTitle("UNO Game");
+    public void start(Stage stage) {
+        primaryStage = stage;
 
-        // Верхняя карта на столе
-        topCardImageView = new ImageView();
-        topCardImageView.setFitWidth(100);
-        topCardImageView.setPreserveRatio(true);
+        // Główna struktura UI
+        VBox root = new VBox(20);
+        root.setAlignment(Pos.CENTER);
+        root.setStyle("-fx-background-image: url('/background.png'); -fx-background-size: cover;");
 
-        // Карты в руках игрока
-        playerHandBox = new HBox(10);
-        playerHandBox.setStyle("-fx-padding: 10px; -fx-alignment: center;");
-        playerHandBox.setAlignment(Pos.CENTER);
+        // Logo gry
+        ImageView logo = new ImageView(loadImage("/logo.png"));
+        logo.setFitWidth(200);
+        logo.setPreserveRatio(true);
 
-        // Карты в руках оппонента
-        opponentHandBox = new HBox(10);
-        opponentHandBox.setStyle("-fx-padding: 10px; -fx-alignment: center;");
-        opponentHandBox.setAlignment(Pos.CENTER);
-        updateOpponentHand(7); // Начальное количество карт оппонента
+        // Przyciski do tworzenia gry lub dołączania do istniejącej
+        Button btnCreate = new Button("Utwórz grę");
+        Button btnJoin = new Button("Dołącz do gry");
+        TextField txtGameId = new TextField();
+        txtGameId.setPromptText("ID gry");
 
-        // Колода карт
-        drawPileImageView = loadImageView("/card_back.png", 80);
+        // Menu główne
+        HBox menu = new HBox(10, btnCreate, txtGameId, btnJoin);
+        menu.setAlignment(Pos.CENTER);
 
-        // Кнопка для взятия карты
-        drawCardButton = new Button("Draw a card");
-        drawCardButton.setStyle("-fx-font-size: 16px; -fx-padding: 10px 20px; -fx-background-color: #4CAF50; -fx-text-fill: white;");
-        drawCardButton.setOnAction(e -> gameClient.sendAction("dobierz"));
+        root.getChildren().addAll(logo, menu);
 
-        VBox layout = new VBox(10);
-        layout.setStyle("-fx-alignment: center; -fx-background-image: url('/background.png'); -fx-background-size: cover;");
-        layout.setAlignment(Pos.CENTER);
+        // Akcja po kliknięciu przycisku "Utwórz grę"
+        btnCreate.setOnAction(e -> {
+            client.createGame(txtGameId.getText());
+            showWaitingScreen(stage);
+        });
 
-        HBox middleBox = new HBox(10, topCardImageView, drawPileImageView);
-        middleBox.setAlignment(Pos.CENTER);
+        // Akcja po kliknięciu przycisku "Dołącz do gry"
+        btnJoin.setOnAction(e -> {
+            client.joinGame(txtGameId.getText());
+            showWaitingScreen(stage);
+        });
 
-        layout.getChildren().addAll(opponentHandBox, middleBox, playerHandBox, drawCardButton);
+        // Inicjalizacja klienta
+        client = new GameClient();
+        client.setOnGameStart(() -> Platform.runLater(() -> showGameScreen(primaryStage))); // Obsługuje początek gry
+        client.setOnGameState(this::updateUI); // Aktualizacja UI na podstawie stanu gry
+        client.connect(); // Połączenie z serwerem
 
-        Scene scene = new Scene(layout, 800, 600);
-        primaryStage.setScene(scene);
-        primaryStage.show();
-
-        gameClient = new GameClient();
-        gameClient.setOnGameStateReceived(this::updateGameState); // Устанавливаем обработчик для обновления состояния игры
-        new Thread(() -> gameClient.startClient()).start();
+        // Ustawienia sceny
+        Scene scene = new Scene(root, 800, 600);
+        stage.setTitle("UNO");
+        stage.setScene(scene);
+        stage.show();
     }
 
-    public void updateGameState(String gameState) {
-        System.out.println("Обновление состояния игры: " + gameState);
+    // Wyświetlenie ekranu oczekiwania na graczy
+    private void showWaitingScreen(Stage stage) {
+        VBox waiting = new VBox(20);
+        waiting.setAlignment(Pos.CENTER);
 
-        JSONObject jsonObject;
-        try {
-            jsonObject = new JSONObject(gameState);
-        } catch (org.json.JSONException e) {
-            System.out.println("Invalid JSON: " + gameState);
-            return;
+        ProgressIndicator progress = new ProgressIndicator();
+        Label label = new Label("Oczekiwanie na graczy...");
+
+        waiting.getChildren().addAll(progress, label);
+        stage.setScene(new Scene(waiting, 800, 600));
+    }
+
+    // Wyświetlenie ekranu gry
+    private void showGameScreen(Stage stage) {
+        VBox gameRoot = new VBox(20);
+        gameRoot.setAlignment(Pos.CENTER);
+
+        // Ustawienie rozmiaru karty na wierzchu stosu
+        topCard.setFitWidth(150);
+        topCard.setPreserveRatio(true);
+
+        // Etykieta z obecnym graczem
+        currentPlayerLabel.setStyle("-fx-font-size: 20px; -fx-text-fill: white;");
+
+        // Kontener na karty przeciwników
+        opponentsBox.getChildren().clear();
+        opponentsBox.setAlignment(Pos.CENTER);
+
+        // Gwarantujemy utworzenie widoków przeciwników przed aktualizacją UI
+        opponentViews = new ImageView[3];
+        for (int i = 0; i < opponentViews.length; i++) {
+            opponentViews[i] = createCardView("/card_back.png");
+            opponentsBox.getChildren().add(opponentViews[i]);
         }
 
+        // Ustawienie kontenera na karty gracza
+        playerHand.setAlignment(Pos.CENTER);
+
+        // Akcja po kliknięciu przycisku "Weź kartę"
+        btnDraw.setOnAction(e -> client.send("ACTION:DRAW"));
+
+        // Dodanie wszystkich elementów do głównego kontenera
+        gameRoot.getChildren().addAll(currentPlayerLabel, opponentsBox, topCard, playerHand, btnDraw);
+
+        // Ustawienie sceny gry
+        Scene gameScene = new Scene(gameRoot, 800, 600);
+        stage.setScene(gameScene);
+        stage.show();
+    }
+
+    // Aktualizacja UI na podstawie stanu gry
+    private void updateUI(String jsonState) {
         Platform.runLater(() -> {
-            String topCard = jsonObject.getString("top_card").toUpperCase();
-            topCardImageView.setImage(loadImage("/" + topCard + ".png")); // Показываем карту на столе
+            try {
+                // Parsowanie stanu gry z JSON-a
+                JSONObject state = new JSONObject(jsonState);
 
-            // Отображаем карты игрока
-            playerHandBox.getChildren().clear();
-            jsonObject.getJSONArray("player_hand").forEach(card -> {
-                String cardImageName = card.toString().toUpperCase();
-                ImageView cardView = new ImageView(loadImage("/" + cardImageName + ".png"));
-                cardView.setFitWidth(80);
-                cardView.setPreserveRatio(true);
+                // 1. Aktualizacja karty na wierzchu
+                if (state.has("topCardValue") && !state.isNull("topCardValue")
+                        && state.has("topCardColor") && !state.isNull("topCardColor")) {
+                    String topCardValue = state.getString("topCardValue");
+                    String topCardColor = state.getString("topCardColor");
+                    topCard.setImage(loadImage(getCardImagePath(topCardValue, topCardColor)));
+                } else {
+                    topCard.setImage(loadImage("/card_back.png"));
+                }
 
-                // Обработчик клика по карте
-                cardView.setOnMouseClicked(e -> gameClient.sendAction(String.valueOf(jsonObject.getJSONArray("player_hand").toList().indexOf(card))));
-                playerHandBox.getChildren().add(cardView);
-            });
+                // 2. Aktualizacja kart przeciwników
+                JSONArray opponentsCards = state.optJSONArray("opponentsCards");
+                if (opponentsCards != null) {
+                    opponentsBox.getChildren().clear();
+                    for (int i = 0; i < opponentsCards.length(); i++) {
+                        int cardCount = opponentsCards.getInt(i);
+                        HBox opponentHand = new HBox(2);
+                        for (int j = 0; j < cardCount; j++) {
+                            opponentHand.getChildren().add(createCardView("/card_back.png"));
+                        }
+                        opponentsBox.getChildren().add(opponentHand);
+                    }
+                }
 
-            // Отображаем карты противника как скрытые карты
-            updateOpponentHand(jsonObject.getInt("opponent_card_count"));
+                // 3. Aktualizacja kart gracza
+                playerHand.getChildren().clear();
+                if (state.has("playerCards")) {
+                    JSONArray playerCards = state.getJSONArray("playerCards");
+                    for (int i = 0; i < playerCards.length(); i++) {
+                        JSONObject cardJson = playerCards.getJSONObject(i);
+                        String value = cardJson.getString("value");
+                        String color = cardJson.getString("color");
+                        ImageView cardView = createCardView(getCardImagePath(value, color));
+                        int cardIndex = i;
+                        cardView.setOnMouseClicked(e -> client.send("ACTION:PLAY:" + cardIndex));
+                        playerHand.getChildren().add(cardView);
+                    }
+                }
+
+                // 4. Aktualizacja obecnego gracza
+                if (state.has("currentPlayer")) {
+                    int currentPlayerIndex = state.getInt("currentPlayer");
+                    currentPlayerLabel.setText("Teraz gra: Gracz " + (currentPlayerIndex + 1));
+                    btnDraw.setDisable(currentPlayerIndex != 0);
+                }
+
+            } catch (Exception e) {
+                System.err.println("Błąd aktualizacji UI: " + e.getMessage());
+                e.printStackTrace();
+            }
         });
     }
 
-    // Отображаем карты противника как скрытые карты
-    private void updateOpponentHand(int cardCount) {
-        opponentHandBox.getChildren().clear();
-        for (int i = 0; i < cardCount; i++) {
-            ImageView cardBackView = loadImageView("/card_back.png", 80);
-            opponentHandBox.getChildren().add(cardBackView);
-        }
+    // Generowanie ścieżki do obrazu karty
+    private String getCardImagePath(String value, String color) {
+        return "/" + value + "-" + color + ".png";
     }
 
+    // Ładowanie obrazu z zasobów
     private Image loadImage(String path) {
-        URL resource = getClass().getResource(path);
-        if (resource == null) {
-            System.err.println("Файл ресурса не найден: " + path);
-            return null;
+        try (InputStream is = getClass().getResourceAsStream(path)) {
+            if (is == null) throw new FileNotFoundException("Nie znaleziono zasobu: " + path);
+            return new Image(is);
+        } catch (Exception e) {
+            System.err.println("Błąd ładowania obrazu: " + path);
+            return new Image(getClass().getResourceAsStream("/card_back.png"));
         }
-        return new Image(resource.toExternalForm());
     }
 
-    private ImageView loadImageView(String path, double fitWidth) {
-        Image image = loadImage(path);
-        if (image == null) return new ImageView(); // Вернуть пустой ImageView, если ресурс не найден
-
-        ImageView imageView = new ImageView(image);
-        imageView.setFitWidth(fitWidth);
-        imageView.setPreserveRatio(true);
-        imageView.setMouseTransparent(true); // Отключаем клики для рубашек
-        return imageView;
-    }
-
-    public void startGame(Stage primaryStage, GameClient client) {
-        System.out.println("Игра начинается...");
-        gameClient = client;
-        Platform.runLater(() -> start(primaryStage));
+    // Tworzenie widoku karty na podstawie ścieżki
+    private ImageView createCardView(String imagePath) {
+        ImageView view = new ImageView(loadImage(imagePath));
+        view.setFitWidth(100);
+        view.setPreserveRatio(true);
+        return view;
     }
 
     public static void main(String[] args) {

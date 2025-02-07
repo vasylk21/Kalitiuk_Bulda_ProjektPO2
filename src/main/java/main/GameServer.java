@@ -1,95 +1,179 @@
 package main;
 
-import java.io.*;
-import java.net.*;
-import java.util.*;
+import org.java_websocket.WebSocket;
+import org.java_websocket.handshake.ClientHandshake;
+import org.java_websocket.server.WebSocketServer;
 
-public class GameServer {
-    private static final int PORT = 12345;
-    private static GameLogic game = new GameLogic();
-    private static List<Socket> playerSockets = new ArrayList<>();
-    private static List<BufferedReader> inputs = new ArrayList<>();
-    private static List<PrintWriter> outputs = new ArrayList<>();
+import java.net.InetSocketAddress;
+import java.io.IOException;
+import java.util.concurrent.*;
 
-    public static void startServer() {
-        try (ServerSocket serverSocket = new ServerSocket(PORT)) {
-            System.out.println("Serwer oczekuje na graczy...");
+public class GameServer extends WebSocketServer {
+    private final ExecutorService threadPool = Executors.newCachedThreadPool();
+    protected static ConcurrentHashMap<String, GameRoom> activeGames = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<WebSocket, Player> connectedPlayers = new ConcurrentHashMap<>();
 
-            // Подключаем двух игроков
-            for (int i = 0; i < 2; i++) {
-                Socket playerSocket = serverSocket.accept();
-                playerSockets.add(playerSocket);
-                inputs.add(new BufferedReader(new InputStreamReader(playerSocket.getInputStream())));
-                outputs.add(new PrintWriter(playerSocket.getOutputStream(), true));
-                System.out.println("Gracz " + (i + 1) + " polaczony!");
+    // Konstruktor serwera, przyjmujący port
+    public GameServer(int port) {
+        super(new InetSocketAddress(port));
+    }
+
+    // Obsługuje nowe połączenie klienta
+    @Override
+    public void onOpen(WebSocket conn, ClientHandshake handshake) {
+        Player player = new Player(conn);
+        connectedPlayers.put(conn, player);
+        System.out.println("Nowe połączenie: " + conn.getRemoteSocketAddress());
+    }
+
+    // Obsługuje wiadomości przychodzące od klienta
+    @Override
+    public void onMessage(WebSocket conn, String message) {
+        threadPool.execute(() -> handleMessage(conn, message));
+    }
+
+    // Przetwarza wiadomości od gracza
+    private void handleMessage(WebSocket conn, String message) {
+        Player player = connectedPlayers.get(conn);
+        String[] parts = message.split(":", 2);
+        String command = parts[0];
+        String data = parts.length > 1 ? parts[1] : "";
+
+        try {
+            // Zależnie od komendy wykonuje odpowiednią akcję
+            switch (command) {
+                case "CREATE":
+                    createGame(player, data);
+                    break;
+                case "JOIN":
+                    joinGame(player, data);
+                    break;
+                case "ACTION":
+                    handleGameAction(player, data);
+                    break;
+                case "CHAT":
+                    handleChatMessage(player, data);
+                    break;
+                case "SAVE":
+                    handleSaveGame(player, data);
+                    break;
+                case "LOAD":
+                    handleLoadGame(player, data);
+                    break;
+                default:
+                    player.send("BŁĄD: Nieznana komenda");
             }
+        } catch (Exception e) {
+            System.err.println("Błąd serwera: " + e.getMessage());
+            e.printStackTrace();
+            player.send("BŁĄD: " + e.getMessage());
+        }
+    }
 
-            // Отправляем сообщение о старте игры обоим игрокам
-            for (PrintWriter output : outputs) {
-                output.println("START_GAME");
+    // Tworzy nową grę
+    private void createGame(Player player, String gameId) {
+        if (activeGames.containsKey(gameId)) {
+            player.send("BŁĄD: Gra o tym ID już istnieje");
+            return;
+        }
+
+        try {
+            GameRoom room = new GameRoom(gameId, player);
+            activeGames.put(gameId, room);
+            player.send("GRA_UTWORZONA:" + gameId);
+        } catch (Exception e) {
+            player.send("BŁĄD: Błąd przy tworzeniu gry");
+        }
+    }
+
+    // Dołącza gracza do gry
+    private void joinGame(Player player, String gameId) {
+        GameRoom game = activeGames.get(gameId);
+        if (game != null) {
+            game.addPlayer(player);
+            player.send("GRA_DOŁĄCZONA:" + gameId);
+
+            // Gra nie jest uruchamiana tutaj, dzieje się to w metodzie addPlayer()
+        } else {
+            player.send("BŁĄD: Gra nie znaleziona");
+        }
+    }
+
+    // Obsługuje akcję gracza w grze
+    private void handleGameAction(Player player, String action) {
+        if (player.currentGame != null) {
+            player.currentGame.handleAction(player, action);
+        }
+    }
+
+    // Obsługuje wiadomość czatu od gracza
+    private void handleChatMessage(Player player, String message) {
+        if (player.currentGame != null) {
+            player.currentGame.broadcastMessage(player.name + ": " + message);
+        }
+    }
+
+    // Obsługuje zapis gry
+    private void handleSaveGame(Player player, String filename) {
+        try {
+            if (player.currentGame != null) {
+                player.currentGame.saveGame(filename);
+                player.send("ZAPIS_SUCCEED: Gra zapisana pomyślnie");
             }
-
-            // Отправляем начальное состояние игры обоим игрокам
-            for (int i = 0; i < 2; i++) {
-                sendGameState(i);
-            }
-
-            // Основной игровой цикл
-            while (!game.isGameOver()) {
-                for (int i = 0; i < 2; i++) {
-                    // Ждем действия от игрока
-                    String action = inputs.get(i).readLine();
-                    if (action == null) continue;
-                    System.out.println("Игрок " + (i + 1) + " выбрал действие: " + action);
-
-                    if (action.equals("dobierz")) {
-                        game.drawCards(i, 1);
-                    } else {
-                        try {
-                            int cardIndex = Integer.parseInt(action);
-                            if (!game.playCard(i, cardIndex)) {
-                                outputs.get(i).println("Неправильный ход.");
-                                continue;
-                            }
-                        } catch (NumberFormatException e) {
-                            outputs.get(i).println("Неправильные данные.");
-                            continue;
-                        }
-                    }
-
-                    // Проверка окончания игры
-                    if (game.isGameOver()) {
-                        break;
-                    }
-
-                    // Переключение хода
-                    game.switchTurn();
-
-                    // Отправляем обновленное состояние игры обоим игрокам
-                    for (int j = 0; j < 2; j++) {
-                        sendGameState(j);
-                    }
-                }
-            }
-
-            // Уведомляем о завершении игры
-            String winner = game.getWinner();
-            for (PrintWriter output : outputs) {
-                output.println("Koniec gry! Победитель: " + winner);
-            }
-
         } catch (IOException e) {
+            player.send("ZAPIS_BŁĄD:" + e.getMessage());
             e.printStackTrace();
         }
     }
 
-    private static void sendGameState(int playerIndex) {
-        String gameState = game.getGameState(playerIndex);
-        outputs.get(playerIndex).println(gameState);
-        System.out.println("Отправлено состояние игры игроку " + (playerIndex + 1) + ": " + gameState); // Добавлено логирование
+    // Obsługuje ładowanie gry
+    private void handleLoadGame(Player player, String filename) {
+        try {
+            if (player.currentGame != null) {
+                player.currentGame.loadGame(filename);
+                player.send("ŁADOWANIE_SUCCEED: Gra załadowana pomyślnie");
+                player.currentGame.broadcastGameState();
+            }
+        } catch (IOException | ClassNotFoundException e) {
+            player.send("ŁADOWANIE_BŁĄD:" + e.getMessage());
+            e.printStackTrace();
+        }
     }
 
+    // Obsługuje zamknięcie połączenia z klientem
+    @Override
+    public void onClose(WebSocket conn, int code, String reason, boolean remote) {
+        Player player = connectedPlayers.remove(conn);
+        if (player != null && player.currentGame != null) {
+            GameRoom game = player.currentGame;
+            game.removePlayer(player);
+            System.out.println("Gracz rozłączył się z gry: " + game.getGameId());
+
+            // Jeśli gra jest pusta, usuwamy ją z aktywnych gier
+            if (game.isEmpty()) {
+                activeGames.remove(game.getGameId());
+                System.out.println("Gra " + game.getGameId() + " usunięta (brak graczy)");
+            }
+        }
+    }
+
+    // Obsługuje błędy WebSocket
+    @Override
+    public void onError(WebSocket conn, Exception ex) {
+        System.err.println("Błąd WebSocket: " + ex.getMessage());
+        ex.printStackTrace();
+    }
+
+    // Inicjalizacja serwera
+    @Override
+    public void onStart() {
+        System.out.println("Serwer WebSocket uruchomiony!");
+    }
+
+    // Główna metoda uruchamiająca serwer
     public static void main(String[] args) {
-        startServer();
+        GameServer server = new GameServer(12345);
+        server.start();
+        System.out.println("Serwer uruchomiony na porcie 12345");
     }
 }
