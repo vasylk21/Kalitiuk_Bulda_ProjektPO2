@@ -8,6 +8,7 @@ import java.net.InetSocketAddress;
 import java.io.IOException;
 import java.util.concurrent.*;
 
+// Klasa serwera WebSocket obsługująca połączenia i zarządzająca grami
 public class GameServer extends WebSocketServer {
     private final ExecutorService threadPool = Executors.newCachedThreadPool();
     protected static ConcurrentHashMap<String, GameRoom> activeGames = new ConcurrentHashMap<>();
@@ -23,7 +24,7 @@ public class GameServer extends WebSocketServer {
     public void onOpen(WebSocket conn, ClientHandshake handshake) {
         Player player = new Player(conn);
         connectedPlayers.put(conn, player);
-        System.out.println("Nowe połączenie: " + conn.getRemoteSocketAddress());
+        System.out.println("New connection: " + conn.getRemoteSocketAddress());
     }
 
     // Obsługuje wiadomości przychodzące od klienta
@@ -38,9 +39,9 @@ public class GameServer extends WebSocketServer {
         String[] parts = message.split(":", 2);
         String command = parts[0];
         String data = parts.length > 1 ? parts[1] : "";
+        System.out.println("[SERVER] Received: " + message);
 
         try {
-            // Zależnie od komendy wykonuje odpowiednią akcję
             switch (command) {
                 case "CREATE":
                     createGame(player, data);
@@ -60,29 +61,33 @@ public class GameServer extends WebSocketServer {
                 case "LOAD":
                     handleLoadGame(player, data);
                     break;
+                case "COLOR":
+                    handleColorChoice(player, data);
+                    break;
                 default:
-                    player.send("BŁĄD: Nieznana komenda");
+                    player.send("ERROR: Nieznana komenda");
             }
         } catch (Exception e) {
-            System.err.println("Błąd serwera: " + e.getMessage());
+            System.err.println("Server error: " + e.getMessage());
             e.printStackTrace();
-            player.send("BŁĄD: " + e.getMessage());
+            player.send("ERROR: " + e.getMessage());
         }
     }
 
     // Tworzy nową grę
     private void createGame(Player player, String gameId) {
+        System.out.println("[SERVER] Creating game: " + gameId);
         if (activeGames.containsKey(gameId)) {
-            player.send("BŁĄD: Gra o tym ID już istnieje");
+            player.send("ERROR: Identyfikator gry już istnieje");
             return;
         }
 
         try {
             GameRoom room = new GameRoom(gameId, player);
             activeGames.put(gameId, room);
-            player.send("GRA_UTWORZONA:" + gameId);
+            player.send("GAME_CREATED:" + gameId);
         } catch (Exception e) {
-            player.send("BŁĄD: Błąd przy tworzeniu gry");
+            player.send("ERROR: Nie udało się utworzyć gry");
         }
     }
 
@@ -91,11 +96,10 @@ public class GameServer extends WebSocketServer {
         GameRoom game = activeGames.get(gameId);
         if (game != null) {
             game.addPlayer(player);
-            player.send("GRA_DOŁĄCZONA:" + gameId);
-
+            player.send("GAME_JOINED:" + gameId);
             // Gra nie jest uruchamiana tutaj, dzieje się to w metodzie addPlayer()
         } else {
-            player.send("BŁĄD: Gra nie znaleziona");
+            player.send("ERROR: Nie znaleziono gry");
         }
     }
 
@@ -103,6 +107,11 @@ public class GameServer extends WebSocketServer {
     private void handleGameAction(Player player, String action) {
         if (player.currentGame != null) {
             player.currentGame.handleAction(player, action);
+        }
+    }
+    private void handleColorChoice(Player player, String color) {
+        if (player.currentGame != null) {
+            player.currentGame.handleColorChoice(player, color); // Передаем player и color
         }
     }
 
@@ -118,10 +127,10 @@ public class GameServer extends WebSocketServer {
         try {
             if (player.currentGame != null) {
                 player.currentGame.saveGame(filename);
-                player.send("ZAPIS_SUCCEED: Gra zapisana pomyślnie");
+                player.send("SAVE_SUCCESS: Gra została pomyślnie zapisana");
             }
         } catch (IOException e) {
-            player.send("ZAPIS_BŁĄD:" + e.getMessage());
+            player.send("ERROR: Błąd podczas zapisywania gry");
             e.printStackTrace();
         }
     }
@@ -131,11 +140,11 @@ public class GameServer extends WebSocketServer {
         try {
             if (player.currentGame != null) {
                 player.currentGame.loadGame(filename);
-                player.send("ŁADOWANIE_SUCCEED: Gra załadowana pomyślnie");
+                player.send("LOAD_SUCCESS: Gra została pomyślnie załadowana");
                 player.currentGame.broadcastGameState();
             }
         } catch (IOException | ClassNotFoundException e) {
-            player.send("ŁADOWANIE_BŁĄD:" + e.getMessage());
+            player.send("ERROR: Błąd podczas ładowania gry");
             e.printStackTrace();
         }
     }
@@ -147,7 +156,7 @@ public class GameServer extends WebSocketServer {
         if (player != null && player.currentGame != null) {
             GameRoom game = player.currentGame;
             game.removePlayer(player);
-            System.out.println("Gracz rozłączył się z gry: " + game.getGameId());
+            System.out.println("Player disconnected from game: " + game.getGameId());
 
             // Jeśli gra jest pusta, usuwamy ją z aktywnych gier
             if (game.isEmpty()) {

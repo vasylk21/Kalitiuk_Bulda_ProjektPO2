@@ -1,4 +1,4 @@
-package main;
+/*package main;
 
 import javafx.application.Platform;
 import javafx.scene.Scene;
@@ -44,4 +44,4 @@ public class WaitingRoom {
             gameApp.start(primaryStage);
         });
     }
-}
+}*/
